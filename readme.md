@@ -23,3 +23,10 @@ long it took to sell that item.
 
 Make sure that each item being added to the databases are put into their own individual tables for item. make sure that each table item
 for each item is specific like if it is an xbox that is 500GB vs 1TB. Make sure to be that specific. 
+
+
+I might not have to make it only get 10% if I am only looking at like one item at a time
+one with a huge search query like laptop has 1million records which will take like exactly 24 hours to get all of the data for.
+
+Idea for what the ai can do is to have it go through the data and suggest a list of categories that it can use and reference to create the 
+tables and then insert the data into after going though it.

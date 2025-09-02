@@ -3,6 +3,7 @@ import json
 import base64
 import time
 import os
+from tqdm import tqdm
 
 # Gets the authorization code and saves it to the auth_code.json file
 def get_ebay_authorization_code():
@@ -65,7 +66,10 @@ def update_authorization_code():
         return auth_code
 
 # Function to call the eBay Browse API and retrieve the data that is requested
-def browse_api_call(auth_code, query):
+def browse_api_call(query, limit=200, offset=0):
+    # Have to continuously check to see if the auth code is expired or not or will error out
+    auth_code = update_authorization_code()
+
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
     headers = {
@@ -76,10 +80,14 @@ def browse_api_call(auth_code, query):
 
     payload = {
         "q" : query,
-        "limit" : 200
+        "limit" : limit,
+        "offset" : offset
     }
 
     response = requests.get(url, headers=headers, params=payload)
+
+    # waiting for a third of a second since I am allotted 5000 queries/day, 208 per hour, about 1 every 17.4 seconds
+    time.sleep(18)
     return response.json()
 
 # An idea for tomorrow is to save the queried search results to a sqllite database
@@ -89,10 +97,11 @@ if __name__ == "__main__":
 
     # Am just going to test out doing gaming consoles for now
     queries = ["Playstation 5", "Xbox Series X", "Nintendo Switch 2", "Steam Deck"]
-    auth_code = update_authorization_code()
     for query in queries:
 
-        data = browse_api_call(auth_code, query)
+        time_for_data_pull = time.time()
+
+        data = browse_api_call(query)
 
         # Check if the folder exists, if not create it
         if not os.path.exists("./data"):
@@ -102,9 +111,30 @@ if __name__ == "__main__":
         if not os.path.exists(f"./data/{query}"):
             os.makedirs(f"./data/{query}")
 
-            # going to save all of the data into json files in the data drop folder.
-            with open(f"./data/{query}/{query}_{time.time()}_item_file.json", "w") as f:
+        # Adding functinoality for pulling 10% of the data by seeing how many search results there are
+        # And going through and pulling 10% of the data.
+        print(f"Saving data for {query}")
+        print([x.upper() if x == query else x for x in queries])
+
+        # Do an initial save of the data to see how many items there are to make sure that I am going through 
+        # and pulling 10% of the data
+        data = browse_api_call(query, limit=1)
+        with open(f"./data/{query}/{query}_{time_for_data_pull}_item_file.json", "w") as f:
+            json.dump(data, f)
+        
+        # Open the file and see how many 200 item pages there are
+        total_pages = 0
+        with open(f"./data/{query}/{query}_{time_for_data_pull}_item_file.json", "r") as f:
+            data = json.load(f)
+            total_items = data["total"]
+            total_pages = (total_items // 200) + 1
+
+        # Going through all of the pages and pulling the data for testing
+        for page in tqdm(range(total_pages)):
+            print(f"Pulling page {page+1} of {total_pages} for {query}")
+            data = browse_api_call(query, limit=200, offset=page*200)
+            with open(f"./data/{query}/{query}_{time_for_data_pull}_item_file_page_{page+1}.json", "w") as f:
                 json.dump(data, f)
 
-    # After saving all of the data into the data drop folders there will be another 
-    # program that will be run to process the data and insert it into a mysql database
+        print(f"Data pulling complete for {query}")
+    print("Finished pulling all the data.")
