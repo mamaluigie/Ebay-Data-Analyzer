@@ -9,3 +9,12 @@
 
 # Depending on the type of listing that I am searching for will depend on what the prompt will be
 # inserted into the ai model for processing.
+
+import sqlite3 
+from transformers imoport transformers
+
+if __name__ == "__main__":
+    # check to see if there is a database already initialized.
+
+    # go through each item and collect a list of categories created with ai
+    pass

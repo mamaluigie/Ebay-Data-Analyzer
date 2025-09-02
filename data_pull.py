@@ -54,6 +54,11 @@ def update_authorization_code():
             else:
                 print("Auth code expired. Generating a new one.")
                 auth_code = get_ebay_authorization_code()
+
+                # Update the authcode file
+                with open("auth_code.json", "w") as f:
+                    json.dump(auth_code,f)
+                    return auth_code
             return auth_code
     else:
         print("Creating a new auth_code.json file.")
