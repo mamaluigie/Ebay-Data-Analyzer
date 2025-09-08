@@ -3,7 +3,10 @@ import json
 import base64
 import time
 import os
+import sqlite3
 from tqdm import tqdm
+
+from data_processing import process_data
 
 # Gets the authorization code and saves it to the auth_code.json file
 def get_ebay_authorization_code():
@@ -70,8 +73,10 @@ def update_authorization_code():
 
         return auth_code
 
+def update_sqllite_db():
+    pass
 # Function to call the eBay Browse API and retrieve the data that is requested
-def browse_api_call(query, limit=200, offset=0):
+def browse_api_call(query, limit=200, offset=0, category_ids=[]):
     # Have to continuously check to see if the auth code is expired or not or will error out
     auth_code = update_authorization_code()
 
@@ -86,7 +91,12 @@ def browse_api_call(query, limit=200, offset=0):
     payload = {
         "q" : query,
         "limit" : limit,
-        "offset" : offset
+        "offset" : offset,
+        # Going to only pull data from USA with shipping option and new items only due to
+        # data cap of 10k items per query
+        "filter" : f"deliveryCountry:{{US}},deliveryOptions:{{SHIP_TO_HOME}},conditions:{{NEW}},maxDeliveryCost:0",
+        "sort" : "newlyListed",
+        "category_ids" : f"{",".join(category_ids)}"
     }
 
     response = requests.get(url, headers=headers, params=payload)
@@ -100,46 +110,56 @@ def browse_api_call(query, limit=200, offset=0):
 # on the images that are provided with each post descriptions
 if __name__ == "__main__":
 
+    # Need to create the data directory if it does not exist
+    if not os.path.exists("./data"):
+        os.makedirs("./data")
+        print("created data directory")
+
     # Am just going to test out doing gaming consoles for now
     queries = ["Playstation 5", "Xbox Series X", "Nintendo Switch 2", "Steam Deck"]
+    # queries = ["Nintendo Switch 2"]
+
     for query in queries:
 
         time_for_data_pull = time.time()
 
-        data = browse_api_call(query)
-
-        # Check if the folder exists, if not create it
-        if not os.path.exists("./data"):
-            os.makedirs("./data")
-
         # check if there is a folder for that item
         if not os.path.exists(f"./data/{query}"):
             os.makedirs(f"./data/{query}")
+            print(f"created data directory for {query}")
 
         # Adding functinoality for pulling 10% of the data by seeing how many search results there are
         # And going through and pulling 10% of the data.
         print(f"Saving data for {query}")
         print([x.upper() if x == query else x for x in queries])
 
-        # Do an initial save of the data to see how many items there are to make sure that I am going through 
-        # and pulling 10% of the data
-        data = browse_api_call(query, limit=1)
-        with open(f"./data/{query}/{query}_{time_for_data_pull}_item_file.json", "w") as f:
-            json.dump(data, f)
-        
-        # Open the file and see how many 200 item pages there are
-        total_pages = 0
-        with open(f"./data/{query}/{query}_{time_for_data_pull}_item_file.json", "r") as f:
-            data = json.load(f)
-            total_items = data["total"]
-            total_pages = (total_items // 200) + 1
+        # This is to see how many pages there are
+        data = browse_api_call(query, limit=1, category_ids=["139971"])
 
+        # Can only pull 10k records before hitting the API limit
+        # This limit occurs when trying to pull pages after the 10kth item
+
+        # See how many 200 item pages there are
+        total_items = data["total"]
+        total_pages = (total_items // 200) + 1
+        if total_pages > 50:
+            total_pages = 50
+
+        # print the percent of items pulled
+        print(f"Percent of items getting pulled is {((total_pages * 200) - (total_items % 200)) / total_items * 100}%")
+        
         # Going through all of the pages and pulling the data for testing
         for page in tqdm(range(total_pages)):
             print(f"Pulling page {page+1} of {total_pages} for {query}")
-            data = browse_api_call(query, limit=200, offset=page*200)
+            data = browse_api_call(query, limit=200, offset=page*200, category_ids=["139971"])
             with open(f"./data/{query}/{query}_{time_for_data_pull}_item_file_page_{page+1}.json", "w") as f:
                 json.dump(data, f)
 
         print(f"Data pulling complete for {query}")
+        print("Processing data into the database now")
+
+        # Now that all of the data has been pulled, I need to process the data
+        process_data(queries, time_for_data_pull)
+        print(f"Data inserted into database for query {query}")
+
     print("Finished pulling all the data.")
