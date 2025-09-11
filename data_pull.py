@@ -6,7 +6,9 @@ import os
 import sqlite3
 from tqdm import tqdm
 
-from data_processing import process_data
+from data_processing import upload_database
+from data_processing import create_table
+from data_processing import clean_item
 
 # Gets the authorization code and saves it to the auth_code.json file
 def get_ebay_authorization_code():
@@ -73,8 +75,6 @@ def update_authorization_code():
 
         return auth_code
 
-def update_sqllite_db():
-    pass
 # Function to call the eBay Browse API and retrieve the data that is requested
 def browse_api_call(query, limit=200, offset=0, category_ids=[]):
     # Have to continuously check to see if the auth code is expired or not or will error out
@@ -105,61 +105,114 @@ def browse_api_call(query, limit=200, offset=0, category_ids=[]):
     time.sleep(18)
     return response.json()
 
-# An idea for tomorrow is to save the queried search results to a sqllite database
-# then connect an ai model to this to analyze the data to see if it is fake based
-# on the images that are provided with each post descriptions
-if __name__ == "__main__":
+# Function to pull the data and save it to a json file
+# Returns the timestamp for the data pull
+# All data is stored in the data directory in the query folder
+def pull_data(query):
 
     # Need to create the data directory if it does not exist
     if not os.path.exists("./data"):
         os.makedirs("./data")
         print("created data directory")
 
-    # Am just going to test out doing gaming consoles for now
-    queries = ["Playstation 5", "Xbox Series X", "Nintendo Switch 2", "Steam Deck"]
-    # queries = ["Nintendo Switch 2"]
+    # This is to see how many pages there are
+    data = browse_api_call(query, limit=1, category_ids=["139971"])
 
-    for query in queries:
+    # See how many 200 item pages there are
+    total_items = data["total"]
+    total_pages = (total_items // 200) + 1
+    if total_pages > 50:
+        total_pages = 50
+    
+    # Check to see if the data is 100% of the data, else skip pulling the data comletely and uploading to the database
+    # Data is not accurate if the data is not 100%
+    if total_items > 9500:
+        # Skip pulling the data completely and uploading to the database
+        print(f"Skipping data pull for {query} as total items exceed 9500")
+        return None
 
-        time_for_data_pull = time.time()
+    time_for_data_pull = time.time()
 
-        # check if there is a folder for that item
-        if not os.path.exists(f"./data/{query}"):
-            os.makedirs(f"./data/{query}")
-            print(f"created data directory for {query}")
+    # check if there is a folder for that item
+    if not os.path.exists(f"./data/{query}"):
+        os.makedirs(f"./data/{query}")
+        print(f"created data directory for {query}")
 
-        # Adding functinoality for pulling 10% of the data by seeing how many search results there are
-        # And going through and pulling 10% of the data.
-        print(f"Saving data for {query}")
-        print([x.upper() if x == query else x for x in queries])
+    # Adding functinoality for pulling 10% of the data by seeing how many search results there are
+    # And going through and pulling 10% of the data.
+    print(f"Saving data for {query}")
+    print([x.upper() if x == query else x for x in queries])
 
-        # This is to see how many pages there are
-        data = browse_api_call(query, limit=1, category_ids=["139971"])
-
-        # Can only pull 10k records before hitting the API limit
-        # This limit occurs when trying to pull pages after the 10kth item
-
-        # See how many 200 item pages there are
-        total_items = data["total"]
-        total_pages = (total_items // 200) + 1
-        if total_pages > 50:
-            total_pages = 50
-
-        # print the percent of items pulled
-        print(f"Percent of items getting pulled is {((total_pages * 200) - (total_items % 200)) / total_items * 100}%")
+    
+    # Going through all of the pages and pulling the data for testing
+    for page in tqdm(range(total_pages)):
+        print(f"Pulling page {page+1} of {total_pages} for {query}")
+        data = browse_api_call(query, limit=200, offset=page*200, category_ids=["139971"])
+        with open(f"./data/{query}/{query}_{time_for_data_pull}_item_file_page_{page+1}.json", "w") as f:
+            json.dump(data, f)
         
-        # Going through all of the pages and pulling the data for testing
-        for page in tqdm(range(total_pages)):
-            print(f"Pulling page {page+1} of {total_pages} for {query}")
-            data = browse_api_call(query, limit=200, offset=page*200, category_ids=["139971"])
-            with open(f"./data/{query}/{query}_{time_for_data_pull}_item_file_page_{page+1}.json", "w") as f:
-                json.dump(data, f)
+    return time_for_data_pull
 
-        print(f"Data pulling complete for {query}")
-        print("Processing data into the database now")
+# Returns a timestamp and query for each successful datapull for a list of tuples
+def pull_all_data(queries):
 
-        # Now that all of the data has been pulled, I need to process the data
-        process_data(queries, time_for_data_pull)
-        print(f"Data inserted into database for query {query}")
+    timestamps = []
+    for query in queries:
+        time = pull_data(query)
+        print(f"Data pulling complete for {query} at time {time}")
+        if time:
+            timestamps.append((query, time))
 
-    print("Finished pulling all the data.")
+    return timestamps
+
+# function to go through and all the data pulled and check if the item does not exist in the initial database
+# if it doesnt then add it to the new database with a timestamp associated with time the item was caught
+# This pulls out all of the fresh data that was actually added to ebay.
+def check_and_upload_database(old_dbname, new_dbname, query, timestamp):
+    
+    # Connect to the old database and create a cursor
+    old_conn = sqlite3.connect(f"./databases/{old_dbname}.db")
+    old_cursor = old_conn.cursor()
+
+    # Connect to the new item database 
+    new_conn = sqlite3.connect(f"./databases/{new_dbname}.db")
+
+    for file in os.listdir(f"./data/{query}/"):
+        if timestamp in file:
+            with open(f"./data/{query}/{file}") as f:
+                data = json.load(f)
+                for item in data["itemSummaries"]:
+                    # Check if item in database
+                    sql = "SELECT * FROM '{query}' WHERE itemId = ?"
+                    result = old_cursor.execute(sql, item["itemId"])
+                    if not result.fetchone():
+                        # Fill new database with item with new timestamp at the current moment this is found out.
+                        # Need to update the data processing library with something better to create a database 
+                        # and to upload data to it with a basic insert so I can use it here.
+                        create_table(new_conn, query)
+                        item = clean_item({}, item)
+
+                    else:
+                        # Skip if the item is not in the database
+                        pass
+                            
+# An idea for tomorrow is to save the queried search results to a sqllite database
+# then connect an ai model to this to analyze the data to see if it is fake based
+# on the images that are provided with each post descriptions
+if __name__ == "__main__":
+    # Am just going to test out doing gaming consoles for now
+    # Will have to update this based on what the ai suggests for the categories for search
+    queries = ["Playstation 5", "Xbox Series X", "Nintendo Switch 2", "Steam Deck"]
+    queries_timestamps = pull_all_data(queries)
+
+    # If the initial database exists create one
+    for query, timestamp in queries_timestamps:
+        if not os.path.exists(f"./databases/initial_{query}.db"):
+            # Uploading the initial database infromation from the query and timestamp named 
+            upload_database(f"initial_{query}", query, timestamp)
+        else:
+            # Else look into each of the original database entries and check to see if there are any new items
+            # This is to create the new item database so we can have more accurate time information.
+            # In the new database include the description for each item also utilizing the shopping api I think.
+            check_and_upload_database(f"initial_{query}", f"new_{query}", query, timestamp)
+        
