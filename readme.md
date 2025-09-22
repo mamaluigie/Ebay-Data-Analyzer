@@ -1,3 +1,60 @@
+# Ebay Data Analyzer
+
+This project is to test the functionality for obtaining all data from a specified ebay query. Doing so is difficult due to the access restrictions that ebay has put on the Feed API. Since there are strict restrictions on the feed api I am required to go through the alternative route on obtaining the data via the browse api.
+
+
+After getting all the data pulled from an original query I can then run data analysis on it to determine interesting things about the data like outliers, time to sell, and other stuff.
+
+### Limitations of the browse api
+
+Some limitations to the browse api are that you can only pull the queried data with 200 item pages at a time limited to a total of 10,000 entries that can be pulled altogether. Rate limits are also set so that you have to wait about 17 seconds in between each data pull or risk getting throttled/ip banned from the api.
+
+### Workaround
+
+Due to this limitation I have to be creative on how I am to pull all of the data. The idea behind how to do this I came up with is to pull 10,000 records and insert them into a sqllite database. 
+
+Retrieve the embeddings for each of the titles of each entry utilizing a transformer encoder based model.
+
+After getting the embeddings for each of the titles I will then be able to cluster each of the titles into categories that each fall in.
+
+Then use a llm model to see a category that each of these would most likely fit in then run a new query with that category name that the llm suggests. 
+
+Repeat on each subcategory until I have like at least 90% of the original query results.
+
+Example:
+
+- Query (Playstation 5) will pull everything that has to do with playstation 5. This is about 1 million records in NA region. 
+- I can only obtain 10,000 records so will feed this data through the embedding model, cluster it, then utilize an llm for detecting what proper category names would be. Like if it is video games or etc.
+
+### Potential issues:
+
+*Will determine if these are actually issues after the testing period is finished*
+
+- (Potential problem): This method could cluster things that are alike to well potentially. Like if there is a kirby game it will only cluster based on if it is a kirby thing. but maybe not. just have to do the kmeans clustering and check output in testing first.
+
+- (Potential problem) I might not be able to obtain all of the categories and will be limited by the number of categories that get pulled in the original 10k 
+
+- (Potential problem) Another thing that I thought of is that there is not really a way to see if a new query was apart of the original set that was pulled in the original query at the beginning. That is why it is important to probably get a fine tuned category to start with and not something that is super broad.
+
+        Example:
+        - Pulling "Playstation 5" might not be good since that will pull so many things that are not directly related to the playstation 5. all depends on the size of the original query.
+
+    - (Potential Fix) I think that a good rule of thumb would be that if the original query is greater than 100k then it probably should not be used. Or if the amount of data that I can actually pull is less than 10% of the overall query. This will ensure that the data quality, number of clusters, and quality of clusters are greater for the data pull.
+
+### Steps to acomplish this
+
+*The basic idea is to pull, then pull subsets until the majority of the original major set is obtained.*
+
+- [x] Pull all the 10k records for the original query of greater than 10k records.
+- [x] Insert this data into a sqlite database.
+- [x] Run this data through an embedding model of choice. *(finished in testing)*
+- [ ] Run the embedded text through a clusetering algorithm.
+- [ ] Run the clustered sorted data through an llm to get the cluster titles.
+- [ ] Use the clustered titles that are output from the llm to get an additional query of 10k records
+- [ ] Run this loop until there is at least 90% of the data obtained from the original query.
+
+## Notes
+
 Sample Size:
 
 The sample size that I am in need of using will update depending on what item is being queried. 
